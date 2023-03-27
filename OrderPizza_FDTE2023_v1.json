@@ -1,0 +1,716 @@
+{
+  "name": "heltonPizzaTest",
+  "description": "Order Pizza System Trainee FDTE 2023",
+  "blueprint_spec": {
+    "requirements": ["core"],
+    "prepare": [],
+    "nodes": [
+      {
+        "id": "START",
+        "type": "Start",
+        "name": "Start Proccess to Order Pizza",
+        "next": "SELECTION",
+        "parameters": {
+          "input_schema": {}
+        },
+        "lane_id": "public"
+      },
+      {
+        "id": "SELECTION",
+        "type": "UserTask",
+        "name": "Select products to add to cart",
+        "next": "ADD_CART",
+        "lane_id": "public",
+        "parameters": {
+          "action": "SELECT_PRODUCTS",
+          "input": {
+            "menu": { "$ref": "my-pizzaria.com/menu" }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "qty": { "type": "integer" },
+              "size": {
+                "type": "string",
+                "enum": ["small", "medium", "large"]
+              },
+              "flavors": { "type": "array" }
+            },
+            "required": ["qty", "flavors", "size"]
+          }
+        }
+      },
+      {
+        "id": "ADD_CART",
+        "type": "SystemTask",
+        "category": "SetToBag",
+        "name": "Add product to cart",
+        "next": "CHECK_ORDER",
+        "lane_id": "public",
+        "parameters": {
+          "action": "ADD_PRODUCTS_CART",
+          "input": {
+            "add_order": {
+              "$js": "({bag}, {result}) => Object.keys(bag).length === 0 ? bag['orders'] = [result] : bag.orders.push(result)"
+            }
+          }
+        }
+      },
+      {
+        "id": "CHECK_ORDER",
+        "type": "UserTask",
+        "name": "User can check the order",
+        "next": "ORDER_OK?",
+        "lane_id": "public",
+        "parameters": {
+          "input": {
+            "order": { "$ref": "bag.orders" }
+          },
+          "action": "CHECK_ORDER_DATAILS",
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "is_selection_finished": {
+                "type": "string",
+                "enum": ["yes", "no"]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "ORDER_OK?",
+        "type": "Flow",
+        "name": "Confirm order or add more products",
+        "lane_id": "public",
+        "next": {
+          "yes": "PAYMENT_&_DELIVERY_METHOD",
+          "no": "SELECTION",
+          "default": "PAYMENT_&_DELIVERY_METHOD"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.is_selection_finished" }
+          }
+        }
+      },
+      {
+        "id": "PAYMENT_&_DELIVERY_METHOD",
+        "name": "Select payment and delivery method",
+        "type": "UserTask",
+        "next": "ORDER_READY_TO_SEND",
+        "lane_id": "public",
+        "parameters": {
+          "action": "SELECT_PAYMENT_METHOD",
+          "input": {
+            "$ref": "my-pizzaria.com/payments"
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "payment_method": {
+                "type": "string",
+                "enum": ["in_advance", "on_deliver"]
+              },
+              "delivery_method": {
+                "type": "string",
+                "enum": ["client-pick_up", "delivery"]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "ORDER_READY_TO_SEND",
+        "name": "Close order to send",
+        "type": "UserTask",
+        "next": "IS_REGISTERED_USER?",
+        "lane_id": "public",
+        "parameters": {
+          "action": "CLOSE_ORDER_DETAILS",
+          "input": {
+            "order": { "$ref": "bag.orders" },
+            "add_payment": { "$ref": "result.payment_method" }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "order_payment": {
+                "$js": "({bag}, {result}) => bag['payment'] = result.payment_method"
+              },
+              "order_delivery": {
+                "$js": "({bag}, {result}) => bag['delivery'] = result.delivery_method"
+              },
+              "is_registered": { "type": "string", "enum": ["yes", "no"] }
+            }
+          }
+        }
+      },
+      {
+        "id": "IS_REGISTERED_USER?",
+        "type": "Flow",
+        "name": "Check if user has an account",
+        "lane_id": "public",
+        "next": {
+          "yes": "LOGIN",
+          "no": "ADD_CLIENT_INFO",
+          "default": "ADD_CLIENT_INFO"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.is_registered" }
+          }
+        }
+      },
+      {
+        "id": "LOGIN",
+        "type": "UserTask",
+        "name": "User may log in",
+        "next": "SEND_ORDER",
+        "lane_id": "public",
+        "parameters": {
+          "action": "USER_LOGIN",
+          "input": {
+            "validation": { "$ref": "my-pizzaria.com/OAuth" }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "address": { "type": "string" },
+              "phone": { "type": "number" },
+              "email": { "type": "string" }
+            }
+          }
+        }
+      },
+      {
+        "id": "SEND_ORDER",
+        "type": "SystemTask",
+        "name": "User may send the order",
+        "next": "RECEIVE_ORDER",
+        "category": "HTTP",
+        "lane_id": "public",
+        "parameters": {
+          "input": {
+            "status": "pending",
+            "order": { "$ref": "bag.orders" },
+            "payment": { "$ref": "bag.payment" },
+            "deliver": { "$ref": "bag.delivery" },
+            "user_info": { "$ref": "result.data" }
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/orders",
+            "verb": "POST",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "ADD_CLIENT_INFO",
+        "name": "Add client information",
+        "type": "UserTask",
+        "next": "WANT_REGISTER?",
+        "lane_id": "public",
+        "parameters": {
+          "action": "FILL_USER_DATA",
+          "input": {
+            "form": { "$ref": "my-pizzaria.com/register_or_not" }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "do_register": { "type": "string", "enum": ["yes", "no"] }
+            }
+          }
+        }
+      },
+      {
+        "id": "WANT_REGISTER?",
+        "type": "Flow",
+        "name": "Ask the user for register",
+        "lane_id": "public",
+        "next": {
+          "yes": "REGISTER",
+          "no": "FILL_USER_TEMPORARY_DATA",
+          "default": "REGISTER"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.do_register" }
+          }
+        }
+      },
+      {
+        "id": "REGISTER",
+        "type": "UserTask",
+        "name": "Create a new user on the system",
+        "next": "SEND_ORDER",
+        "lane_id": "public",
+        "parameters": {
+          "action": "PERSIST_USER_DATA",
+          "input": {
+            "register": { "$ref": "my-pizzaria.com/form_signup" }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "address": { "type": "string" },
+              "phone": { "type": "number" },
+              "email": { "type": "string" },
+              "password": { "type": "string" }
+            },
+            "required": ["name", "address", "phone", "email", "password"]
+          }
+        }
+      },
+      {
+        "id": "FILL_USER_TEMPORARY_DATA",
+        "type": "UserTask",
+        "name": "Fill temporary data to complete the order",
+        "next": "SEND_ORDER",
+        "lane_id": "public",
+        "parameters": {
+          "action": "FILL_TEMPORARY_DATA",
+          "input": {
+            "temporary_form": { "$ref": "my-pizzaria.com/temporary_form" }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "address": { "type": "string" },
+              "phone": { "type": "number" },
+              "email": { "type": "string" }
+            },
+            "required": ["name", "address", "phone"]
+          }
+        }
+      },
+      {
+        "id": "RECEIVE_ORDER",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "System receives the order",
+        "next": "SAVE_ORDER_SYSTEM",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "input": {},
+          "request": {
+            "url": "https://my-pizzaria.com/orders",
+            "verb": "GET",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "SAVE_ORDER_SYSTEM",
+        "type": "SystemTask",
+        "category": "SetToBag",
+        "name": "Save order information on the system",
+        "next": "PREPARE_ORDER",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "input": {
+            "order": { "$ref": "result.data" }
+          }
+        }
+      },
+      {
+        "id": "PREPARE_ORDER",
+        "type": "UserTask",
+        "name": "Order is being prepared",
+        "next": "UPDATE_STATUS",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "action": "PREPARE_ORDER",
+          "input": {
+            "order": { "$ref": "bag.orders" }
+          }
+        }
+      },
+      {
+        "id": "UPDATE_STATUS",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Update order status",
+        "next": "PREPARE_DELIVER",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "input": {
+            "status": "done"
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/orders",
+            "verb": "PUT",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "PREPARE_DELIVER",
+        "type": "UserTask",
+        "name": "Package order to be delivered or picked up",
+        "next": "DELIVER_OR_PICKUP",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "action": "PACK_ORDER",
+          "input": {
+            "deliver": {
+              "$js": "({bag}) => bag.delivery === 'delivery' ? 'delivery' : 'pickup'"
+            }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "delivery_pickup": {
+                "type": "string",
+                "enum": ["delivery", "pickup"]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "DELIVER_OR_PICKUP",
+        "type": "Flow",
+        "name": "Check which delivery method the user has chosen",
+        "lane_id": "pizzaria",
+        "next": {
+          "deliver": "NOTIFY_TO_DELIVERY",
+          "pickup": "NOTIFY_CLIENT",
+          "default": "NOTIFY_CLIENT"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.delivery_pickup" }
+          }
+        }
+      },
+      {
+        "id": "NOTIFY_TO_DELIVERY",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Notify the delivery department",
+        "next": "SEND_ORDER_ROUTE",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "input": {
+            "ask_delivery": "order to deliver"
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/notify",
+            "verb": "POST",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "SEND_ORDER_ROUTE",
+        "type": "UserTask",
+        "name": "Route to deliver the order to the client",
+        "next": "VERIFY_PAYMENT_METHOD",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "action": "SEND_ORDER_TO_CLIENT",
+          "input": {
+            "order": { "$ref": "bag.orders" },
+            "payment": { "$ref": "bag.payment" },
+            "user_info": { "$ref": "bag.user_info" }
+          }
+        }
+      },
+      {
+        "id": "NOTIFY_CLIENT",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Notify client to pick the order up",
+        "next": "WAIT_PICKUP",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "input": {
+            "client_phone": { "$ref": "bag.user_info.phone" }
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/notify/client",
+            "verb": "POST",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "WAIT_PICKUP",
+        "type": "UserTask",
+        "name": "Wait client to pick up the order",
+        "next": "VERIFY_PAYMENT_METHOD",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "action": "WAIT_CLIENT_TO_PICKUP",
+          "input": {
+            "order": { "$ref": "bag.orders" },
+            "user_info": { "$ref": "bag.user_info" },
+            "payment": { "$ref": "bag.payment" }
+          }
+        }
+      },
+      {
+        "id": "VERIFY_PAYMENT_METHOD",
+        "type": "UserTask",
+        "name": "Verify if the client select to pay in advance or on deliver",
+        "next": "CHECK_PAYMENT_METHOD",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "action": "VERIFY_PAYMENT_METHOD",
+          "input": {
+            "payment_method": {
+              "$js": "bag.payment === 'in_advance' ? 'in_advance' : 'on_deliver'"
+            }
+          },
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "payment_method_select": {
+                "type": "string",
+                "enum": ["in_advance", "on_deliver"]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "CHECK_PAYMENT_METHOD",
+        "type": "Flow",
+        "name": "Check the payment status",
+        "lane_id": "pizzaria",
+        "next": {
+          "in_advance": "CLEAR_TO_DELIVER",
+          "on_deliver": "WAIT_PAYMENT",
+          "default": "WAIT_PAYMENT"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.payment_method_select" }
+          }
+        }
+      },
+      {
+        "id": "CLEAR_TO_DELIVER",
+        "type": "UserTask",
+        "name": "Clear to deliver the order to the client",
+        "next": "RECEIVE_ORDER",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "action": "CLIENT_ALLOWED__TO_RECEIVE_ORDER",
+          "input": {}
+        }
+      },
+      {
+        "id": "WAIT_PAYMENT",
+        "type": "SystemTask",
+        "category": "Timer",
+        "name": "Wait payment to process",
+        "next": "ORDER_DELIVERED",
+        "lane_id": "pizzaria",
+        "parameters": {
+          "input": {},
+          "timeout": 120
+        }
+      },
+      {
+        "id": "ORDER_DELIVERED",
+        "type": "UserTask",
+        "name": "Order is delivered to the client",
+        "next": "IS_ORDER_OK?",
+        "lane_id": "client",
+        "parameters": {
+          "action": "RECEIVE_AND_CHECK_ORDER",
+          "input": {},
+          "activity_schema": {
+            "type": "object",
+            "properties": {
+              "order_status": { "type": "string", "enum": ["ok", "not_ok"] }
+            }
+          }
+        }
+      },
+      {
+        "id": "IS_ORDER_OK?",
+        "type": "Flow",
+        "name": "Check if delivered order matches with what was ordered",
+        "lane_id": "client",
+        "next": {
+          "ok": "SET_FEEDBACK",
+          "not_ok": "REFUND",
+          "default": "SET_FEEDBACK"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.order_status" }
+          }
+        }
+      },
+      {
+        "id": "SET_FEEDBACK",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Client gives a feedback about the order",
+        "next": "END_PROCESS_1",
+        "lane_id": "client",
+        "parameters": {
+          "input": {
+            "message": { "type": "string" }
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/feedback",
+            "verb": "POST",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "END_PROCESS_1",
+        "type": "Finish",
+        "name": "Process is terminated",
+        "lane_id": "client",
+        "next": null
+      },
+      {
+        "id": "REFUND",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Client complain and ask for refund",
+        "next": "REFUND_CHECK",
+        "lane_id": "client",
+        "parameters": {
+          "input": {
+            "order": { "$ref": "bag.order" },
+            "user_info": { "$ref": "bag.user_info" },
+            "agency": { "type": "number" },
+            "account": { "type": "number" }
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/refund",
+            "verb": "POST",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "REFUND_CHECK",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Update refund status",
+        "next": "REFUND_ANSWER",
+        "lane_id": "client",
+        "parameters": {
+          "input": {
+            "refund_status": {
+              "type": "string",
+              "enum": ["valid", "not_valid"]
+            }
+          },
+          "request": {
+            "url": "https://my-pizzaria.com/refund",
+            "verb": "PUT",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "REFUND_ANSWER",
+        "type": "SystemTask",
+        "category": "HTTP",
+        "name": "Get the answer about the refund request",
+        "next": "REFUND_VALID?",
+        "lane_id": "client",
+        "parameters": {
+          "input": {},
+          "request": {
+            "url": "https://my-pizzaria.com/refund",
+            "verb": "GET",
+            "headers": {
+              "ContentType": "application/json"
+            }
+          }
+        }
+      },
+      {
+        "id": "REFUND_VALID?",
+        "type": "Flow",
+        "name": "Check the refund answer",
+        "lane_id": "client",
+        "next": {
+          "valid": "DO_REFUND",
+          "not_valid": "END_PROCESS_3",
+          "default": "DO_REFUND"
+        },
+        "parameters": {
+          "input": {
+            "decision": { "$ref": "result.data" }
+          }
+        }
+      },
+      {
+        "id": "DO_REFUND",
+        "type": "SystemTask",
+        "category": "Timer",
+        "name": "Client awaits for the refund be credited on his account",
+        "next": "END_PROCESS_2",
+        "lane_id": "client",
+        "parameters": {
+          "input": {},
+          "timeout": 172800
+        }
+      },
+      {
+        "id": "END_PROCESS_2",
+        "type": "Finish",
+        "name": "Process is terminated",
+        "lane_id": "client",
+        "next": null
+      },
+      {
+        "id": "END_PROCESS_3",
+        "type": "Finish",
+        "name": "Process is terminated",
+        "lane_id": "client",
+        "next": null
+      }
+    ],
+    "lanes": [
+      {
+        "id": "public",
+        "name": "public lane",
+        "rule": ["fn", ["&", "args"], true]
+      },
+      {
+        "id": "pizzaria",
+        "name": "pizzaria lane",
+        "rule": ["fn", ["&", "args"], true]
+      },
+      {
+        "id": "client",
+        "name": "client lane",
+        "rule": ["fn", ["&", "args"], true]
+      }
+    ],
+    "environment": {}
+  }
+}
